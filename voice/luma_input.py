@@ -1,4 +1,4 @@
-import openai
+import google.generativeai as genai
 import speech_recognition as sr
 from elevenlabs import generate, play
 from elevenlabs import set_api_key
@@ -9,20 +9,23 @@ import os
 load_dotenv()
 
 # Get API Keys from environment variables
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
 
-if not OPENAI_API_KEY or not ELEVENLABS_API_KEY:
+if not GEMINI_API_KEY or not ELEVENLABS_API_KEY:
     raise ValueError("Missing API keys in .env file")
 
-openai.api_key = OPENAI_API_KEY
+# Configure Gemini
+genai.configure(api_key=GEMINI_API_KEY)
 set_api_key(ELEVENLABS_API_KEY)
+
+# Initialize Gemini model
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # Context window to keep track of conversation
 conversation_history = [
-    {"role": "system", "content": "You are a friendly and natural-sounding AI assistant. Keep responses simple and engaging, like a human conversation."}
+    {"role": "assistant", "content": "You are a friendly and natural-sounding AI assistant. Keep responses simple and engaging, like a human conversation."}
 ]
-
 
 def transcribe_speech_to_text():
     """
@@ -47,9 +50,9 @@ def transcribe_speech_to_text():
         return None
 
 
-def get_openai_chat_response(prompt):
+def get_gemini_chat_response(prompt):
     """
-    Sends a prompt to OpenAI Chat API and returns a human-like response.
+    Sends a prompt to Gemini API and returns a human-like response.
     """
     global conversation_history
 
@@ -57,22 +60,19 @@ def get_openai_chat_response(prompt):
     conversation_history.append({"role": "user", "content": prompt})
 
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=conversation_history,
-            max_tokens=100,
-            temperature=0.8,  # Increases randomness to sound more human
-            n=1
-        )
+        # Create the chat request
+        response = model.generate_content([
+            {"text": msg["content"]} for msg in conversation_history
+        ])
 
-        ai_response = response['choices'][0]['message']['content'].strip()
+        ai_response = response.text.strip()
 
         # Add AI response to conversation history
         conversation_history.append({"role": "assistant", "content": ai_response})
 
         return ai_response
     except Exception as e:
-        print(f"Error calling OpenAI API: {e}")
+        print(f"Error calling Gemini API: {e}")
         return "Hmm... I ran into a problem. Can you try again?"
 
 
@@ -83,8 +83,8 @@ def speak_text(text):
     try:
         audio = generate(
             text=text,
-            voice="Eric",
-            model="eleven_multilingual_v2"
+            voice="Matthew",
+            model="eleven_flash_v2_5"
         )
         play(audio)
     except Exception as e:
@@ -101,26 +101,18 @@ def main():
         # Listen to user input
         user_input = transcribe_speech_to_text()
 
-        # Check if user wants to exit
-        if user_input is None:
-            continue  # Skip to next iteration if no valid input
-
-        if "end process" in user_input:
-            print("\nEnding conversation. Take care!")
-            speak_text("Goodbye! Have a great day!")
-            break
-
-        # Get AI response with context
-        ai_response = get_openai_chat_response(user_input)
-
-        if ai_response:
-            print("\n--- AI Response ---")
-            print(ai_response)
-
-            # Speak out the response using Eric's voice
+        if user_input:
+            if user_input == "end process":
+                print("Ending chat...")
+                speak_text("Goodbye! Have a great day!")
+                break
+                
+            # Get AI response using Gemini
+            ai_response = get_gemini_chat_response(user_input)
+            print(f"AI: {ai_response}")
+            
+            # Convert response to speech
             speak_text(ai_response)
-        else:
-            print("No response from AI.")
 
 
 if __name__ == "__main__":

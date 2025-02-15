@@ -1,7 +1,6 @@
 import os
 import time
 import json
-import openai
 import requests
 import speech_recognition as sr
 import subprocess
@@ -11,26 +10,35 @@ from urllib.request import urlretrieve
 from dotenv import load_dotenv
 from elevenlabs import generate, set_api_key
 
+# Gemini imports
+import google.generativeai as genai
+
 # -------------------------------------------------------------------
 # 1. LOAD ENVIRONMENT VARIABLES
 # -------------------------------------------------------------------
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# Fetch all API keys from .env
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
 GOOEY_API_KEY = os.getenv('GOOEY_API_KEY')
 
-if not all([OPENAI_API_KEY, ELEVENLABS_API_KEY, GOOEY_API_KEY]):
+if not all([GEMINI_API_KEY, ELEVENLABS_API_KEY, GOOEY_API_KEY]):
     raise ValueError("Missing one or more required API keys in your .env file.")
 
-openai.api_key = OPENAI_API_KEY
+# Configure Gemini
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# ElevenLabs config
 set_api_key(ELEVENLABS_API_KEY)
 
 # -------------------------------------------------------------------
 # 2. MAINTAIN CONVERSATION HISTORY
 # -------------------------------------------------------------------
+# We initialize this with a "role=assistant" so Gemini knows it's playing the role of a friendly AI.
 conversation_history = [
-    {"role": "system", "content": "You are a friendly AI assistant. Keep responses concise and engaging."}
+    {"role": "assistant", "content": "You are a friendly and natural-sounding AI assistant. Keep responses simple and engaging, like a human conversation."}
 ]
 
 # -------------------------------------------------------------------
@@ -55,28 +63,38 @@ def transcribe_speech_to_text():
         return None
 
 # -------------------------------------------------------------------
-# 4. GET A RESPONSE FROM OPENAI
+# 4. GET A RESPONSE FROM GEMINI
 # -------------------------------------------------------------------
-def get_openai_chat_response(prompt):
+def get_gemini_chat_response(prompt):
+    """
+    Sends user prompt to Gemini, appends the response to conversation_history,
+    and returns the AI-generated text.
+    """
     global conversation_history
+
+    # Add user's latest message
     conversation_history.append({"role": "user", "content": prompt})
-    
+
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=conversation_history,
-            max_tokens=150,
-            temperature=0.8
-        )
-        ai_response = response['choices'][0]['message']['content'].strip()
+        # Gemini expects a list of text messages in chronological order
+        # We feed in each conversation turn's "content".
+        response = model.generate_content([
+            {"text": msg["content"]} for msg in conversation_history
+        ])
+
+        ai_response = response.text.strip()
+
+        # Add AI's reply to conversation history
         conversation_history.append({"role": "assistant", "content": ai_response})
+
         return ai_response
+
     except Exception as e:
-        print(f"Error calling OpenAI: {e}")
+        print(f"Error calling Gemini API: {e}")
         return "I encountered an error. Please try again."
 
 # -------------------------------------------------------------------
-# 5. GENERATE LIP-SYNCED VIDEO (MP4) WITH AUDIO
+# 5. GENERATE LIP-SYNCED VIDEO (MP4) WITH AUDIO (Gooey.ai)
 # -------------------------------------------------------------------
 def generate_lipsync_video(text):
     """
@@ -158,10 +176,10 @@ def play_mp4_with_default_player(mp4_path):
         print("Unsupported OS: cannot auto-play the video.")
 
 # -------------------------------------------------------------------
-# 7. MAIN LOGIC: CAPTURE SPEECH -> OPENAI -> LIPSYNC MP4 -> PLAY
+# 7. MAIN LOGIC: CAPTURE SPEECH -> GEMINI -> LIPSYNC MP4 -> PLAY
 # -------------------------------------------------------------------
 def main():
-    print("AI Lip-Sync Demo Started!")
+    print("AI Lip-Sync Demo (Gemini) Started!")
     while True:
         user_text = transcribe_speech_to_text()
         if not user_text:
@@ -171,8 +189,8 @@ def main():
             print("Ending process. Goodbye!")
             break
 
-        # Get AI response
-        ai_response = get_openai_chat_response(user_text)
+        # Get AI response from Gemini
+        ai_response = get_gemini_chat_response(user_text)
         print(f"\nAI says: {ai_response}\n")
 
         # Generate MP4 with embedded audio
@@ -181,7 +199,7 @@ def main():
             # Play it in the system's default player
             play_mp4_with_default_player(mp4_file)
 
-            # OPTIONAL: Wait a few seconds if you want to auto-delete it after playback
+            # OPTIONAL: Wait a few seconds if you want to auto-delete after playback
             # time.sleep(10)
             # os.remove(mp4_file)
 

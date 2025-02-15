@@ -4,7 +4,6 @@ import VideoSection from './components/VideoSection';
 import RobotCamera from './components/RobotCamera';
 import Controls from './components/Controls';
 import Login from './components/Login';
-import MobileVoice from './components/MobileVoice';
 
 const AppContainer = styled.div`
   height: 100vh;

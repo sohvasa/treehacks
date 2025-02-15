@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, Response, send_from_directory
 from flask_cors import CORS
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
@@ -12,6 +12,11 @@ from flask_socketio import SocketIO, emit
 from twilio.rest import Client
 import base64
 import tempfile
+import sys
+import json
+import time
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'voice'))
+from voice import get_gemini_chat_response, speak_text, transcribe_speech_to_text, generate_lipsync_video
 
 # Load environment variables
 load_dotenv()
@@ -23,7 +28,7 @@ openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 if not os.getenv('OPENAI_API_KEY'):
     raise ValueError("OPENAI_API_KEY not found in environment variables")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 CORS(app, resources={
     r"/*": {
         "origins": ["http://localhost:3000"],
@@ -225,33 +230,59 @@ def handle_voice():
             print('No audio data received')
             return jsonify({'error': 'No audio data received'}), 400
 
-        # Process the audio
+        # Process the audio using the existing Whisper transcription
         transcript = process_audio(data['audio'])
         if not transcript:
             print('Failed to process audio')
             return jsonify({'error': 'Failed to process audio'}), 400
 
-        # Generate summary
-        summary = generate_summary(transcript)
-        if not summary:
-            print('Failed to generate summary') 
-            return jsonify({'error': 'Failed to generate summary'}), 400
+        # Get AI response using Gemini
+        ai_response = get_gemini_chat_response(transcript)
+        if not ai_response:
+            print('Failed to get AI response')
+            return jsonify({'error': 'Failed to get AI response'}), 400
 
-        # Send SMS notification
-        sms_sent = send_sms_notification(summary)
-        if not sms_sent:
-            print('Failed to send SMS')
-            return jsonify({'error': 'Failed to send SMS'}), 400
-
+        # Generate lip-sync video using Gooey.ai
+        video_filename = generate_lipsync_video(ai_response)
+        if video_filename:
+            # Store the video URL for the event stream
+            app.current_video_url = f'http://localhost:5001/static/videos/{video_filename}'
+            
+        # Generate voice response using ElevenLabs
+        try:
+            speak_text(ai_response)
+        except Exception as e:
+            print(f'Error generating voice response: {e}')
+            
         return jsonify({
             'success': True,
             'transcript': transcript,
-            'summary': summary,
-            'sms_sent': sms_sent
+            'response': ai_response,
+            'videoUrl': app.current_video_url if hasattr(app, 'current_video_url') else None
         })
     except Exception as e:
         print(f"Error processing voice: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/video-stream')
+def video_stream():
+    def generate():
+        while True:
+            # Check if there's a new video
+            if hasattr(app, 'current_video_url'):
+                data = json.dumps({
+                    'videoUrl': app.current_video_url
+                })
+                yield f"data: {data}\n\n"
+                # Clear the current video URL
+                delattr(app, 'current_video_url')
+            time.sleep(0.1)
+
+    return Response(generate(), mimetype='text/event-stream')
+
+@app.route('/static/videos/<path:filename>')
+def serve_video(filename):
+    return send_from_directory('static/videos', filename)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, port=5001)

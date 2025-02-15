@@ -8,7 +8,7 @@ import tempfile
 from urllib.request import urlretrieve
 
 from dotenv import load_dotenv
-from elevenlabs import generate, set_api_key
+from elevenlabs import generate, set_api_key, play
 
 # Gemini imports
 import google.generativeai as genai
@@ -126,6 +126,10 @@ def generate_lipsync_video(text):
             model="eleven_flash_v2_5"
         )
 
+        # Create static/videos directory if it doesn't exist
+        static_dir = os.path.join(os.path.dirname(__file__), '..', 'server', 'static', 'videos')
+        os.makedirs(static_dir, exist_ok=True)
+
         # Save audio temporarily
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
             audio_path = temp_wav.name
@@ -133,7 +137,8 @@ def generate_lipsync_video(text):
 
         # 5.2 Call Gooey.ai to produce lip-synced video
         print("Calling Gooey.ai Lipsync to produce MP4...")
-        with open(audio_path, "rb") as audio_file, open("avatar.png", "rb") as face_file:
+        avatar_path = os.path.join(os.path.dirname(__file__), 'avatar.png')
+        with open(audio_path, "rb") as audio_file, open(avatar_path, "rb") as face_file:
             files = {
                 "json": (None, json.dumps({}), "application/json"),
                 "input_face": ("avatar.png", face_file, "image/png"),
@@ -151,15 +156,17 @@ def generate_lipsync_video(text):
         mp4_url = result["output"]["output_video"]
         print(f"Lip-sync MP4 URL: {mp4_url}")
 
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_mp4:
-            mp4_path = temp_mp4.name
-            urlretrieve(mp4_url, mp4_path)
+        # Save to static directory with timestamp to avoid conflicts
+        timestamp = int(time.time())
+        mp4_filename = f'video_{timestamp}.mp4'
+        mp4_path = os.path.join(static_dir, mp4_filename)
+        urlretrieve(mp4_url, mp4_path)
         
         # Clean up the temporary audio
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
-        return mp4_path
+        return mp4_filename  # Return just the filename, not the full path
 
     except Exception as e:
         print(f"Error generating lip-sync video: {e}")
@@ -204,6 +211,21 @@ def play_mp4_with_default_player(mp4_path):
     else:
         print("Unsupported OS: cannot auto-play the video.")
 
+# Add this function to voice.py (around line 43, after setting ElevenLabs config)
+
+def speak_text(text):
+    """
+    Uses ElevenLabs API to generate a more human-like voice response.
+    """
+    try:
+        audio = generate(
+            text=text,
+            voice="Eric",  # Using Eric to match the lip-sync voice
+            model="eleven_flash_v2_5"
+        )
+        play(audio)
+    except Exception as e:
+        print(f"Error using ElevenLabs API: {e}")
 
 # -------------------------------------------------------------------
 # 7. MAIN LOGIC: CAPTURE SPEECH -> GEMINI -> LIPSYNC MP4 -> PLAY

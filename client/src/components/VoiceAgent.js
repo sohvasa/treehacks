@@ -59,7 +59,7 @@ const VoiceAgent = () => {
 
   const initializeSocket = () => {
     if (!socket.current) {
-      socket.current = io('http://localhost:5000');
+      socket.current = io('http://localhost:5001');
       
       socket.current.on('connect', () => {
         console.log('Connected to server');

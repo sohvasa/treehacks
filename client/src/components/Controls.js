@@ -110,7 +110,7 @@ const Controls = ({ onJoystickMove, onMicToggle }) => {
         reader.onloadend = async () => {
           try {
             setStatus('Sending to server...');
-            const response = await fetch('http://localhost:5000/handle_voice', {
+            const response = await fetch('http://localhost:5001/handle_voice', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',

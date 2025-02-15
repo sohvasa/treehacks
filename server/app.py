@@ -10,12 +10,18 @@ from bson import ObjectId
 from datetime import datetime
 from flask_socketio import SocketIO, emit
 from twilio.rest import Client
-import openai
 import base64
 import tempfile
 
 # Load environment variables
 load_dotenv()
+
+# Initialize OpenAI client
+from openai import OpenAI
+openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+if not os.getenv('OPENAI_API_KEY'):
+    raise ValueError("OPENAI_API_KEY not found in environment variables")
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -65,8 +71,6 @@ twilio_client = Client(
     os.getenv('TWILIO_AUTH_TOKEN')
 )
 
-# Initialize OpenAI client
-openai.api_key = os.getenv('OPENAI_API_KEY')
 
 def send_sms_notification(message):
     """Send SMS notification using Twilio"""
@@ -76,6 +80,7 @@ def send_sms_notification(message):
             from_=os.getenv('TWILIO_PHONE_NUMBER'),
             to=os.getenv('USER_PHONE_NUMBER')
         )
+        print("SMS sent successfully: ", message)
         return True
     except Exception as e:
         print(f"Error sending SMS: {str(e)}")
@@ -89,13 +94,14 @@ def process_audio(audio_data):
             audio_bytes = base64.b64decode(audio_data.split(',')[1])
             temp_audio.write(audio_bytes)
             temp_audio.flush()
-            
+
             # Transcribe audio using Whisper
             with open(temp_audio.name, "rb") as audio_file:
-                transcript = openai.audio.transcriptions.create(
+                transcript = openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file
                 )
+            print("Transcript: ", transcript.text)
             return transcript.text
     except Exception as e:
         print(f"Error processing audio: {str(e)}")
@@ -104,14 +110,14 @@ def process_audio(audio_data):
 def generate_summary(transcript):
     """Generate a summary using OpenAI GPT"""
     try:
-        response = openai.chat.completions.create(
+        response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that summarizes completed tasks."},
-                {"role": "user", "content": f"Please provide a brief, clear summary of this completed task: {transcript}"}
-            ],
-            max_tokens=150
-        )
+            {"role": "system", "content": "You are a helpful assistant that summarizes completed tasks."},
+            {"role": "user", "content": f"Please provide a brief, clear summary of this completed task: {transcript}"}
+        ],
+        max_tokens=150)
+        print('summary: ', response.choices[0].message.content)
         return response.choices[0].message.content
     except Exception as e:
         print(f"Error generating summary: {str(e)}")
@@ -134,8 +140,9 @@ def handle_voice_data(data):
             return
 
         # Send SMS notification
+        print('summary: ', summary)
         sms_sent = send_sms_notification(summary)
-        
+
         # Send response back to client
         emit('voice_response', {
             'success': True,
@@ -154,15 +161,15 @@ def register():
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
         response.headers.add('Access-Control-Allow-Methods', 'POST')
         return response
-        
+
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
     phone = data.get('phone_number')
-    
+
     if not username or not password or not phone:
         return jsonify({"error": "Missing required fields"}), 400
-    
+
     # Basic phone number validation
     phone = ''.join(filter(str.isdigit, phone))
     if len(phone) < 10:
@@ -170,7 +177,7 @@ def register():
 
     # Hash the password
     hashed_password = generate_password_hash(password)
-    
+
     try:
         users.insert_one({
             "username": username,
@@ -195,12 +202,12 @@ def login():
         return response
 
     data = request.get_json()
-    
+
     if not data or 'username' not in data or 'password' not in data:
         return jsonify({"error": "Missing username or password"}), 400
-    
+
     user = users.find_one({"username": data['username']})
-    
+
     if user and check_password_hash(user['password'], data['password']):
         return jsonify({
             "message": "Login successful",
@@ -211,24 +218,31 @@ def login():
 
 @app.route('/handle_voice', methods=['POST'])
 def handle_voice():
+    print('handle_voice called')
     try:
         data = request.json
         if not data or 'audio' not in data:
+            print('No audio data received')
             return jsonify({'error': 'No audio data received'}), 400
 
         # Process the audio
         transcript = process_audio(data['audio'])
         if not transcript:
+            print('Failed to process audio')
             return jsonify({'error': 'Failed to process audio'}), 400
 
         # Generate summary
         summary = generate_summary(transcript)
         if not summary:
+            print('Failed to generate summary') 
             return jsonify({'error': 'Failed to generate summary'}), 400
 
         # Send SMS notification
         sms_sent = send_sms_notification(summary)
-        
+        if not sms_sent:
+            print('Failed to send SMS')
+            return jsonify({'error': 'Failed to send SMS'}), 400
+
         return jsonify({
             'success': True,
             'transcript': transcript,
@@ -240,4 +254,4 @@ def handle_voice():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, port=5000)
+    socketio.run(app, debug=True, port=5001)

@@ -30,6 +30,15 @@ if not all([GEMINI_API_KEY, ELEVENLABS_API_KEY, GOOEY_API_KEY]):
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
+# Configure generation parameters for concise responses
+generation_config = {
+    "temperature": 0.4, 
+    "top_k": 1,
+    "top_p": 0.8,
+    "max_output_tokens": 100, 
+    "candidate_count": 1
+}
+
 # ElevenLabs config
 set_api_key(ELEVENLABS_API_KEY)
 
@@ -68,7 +77,7 @@ def transcribe_speech_to_text():
 def get_gemini_chat_response(prompt):
     """
     Sends user prompt to Gemini, appends the response to conversation_history,
-    and returns the AI-generated text.
+    and returns a concise AI-generated text limited to 12 words.
     """
     global conversation_history
 
@@ -76,11 +85,17 @@ def get_gemini_chat_response(prompt):
     conversation_history.append({"role": "user", "content": prompt})
 
     try:
-        # Gemini expects a list of text messages in chronological order
-        # We feed in each conversation turn's "content".
-        response = model.generate_content([
+        # Add instruction for concise response
+        messages = [
             {"text": msg["content"]} for msg in conversation_history
-        ])
+        ]
+        messages.append({"text": "Please give a very helpful, human-like response in under 12 words."}
+        )
+        
+        response = model.generate_content(
+            messages,
+            generation_config=generation_config
+        )
 
         ai_response = response.text.strip()
 
@@ -108,7 +123,7 @@ def generate_lipsync_video(text):
         audio_data = generate(
             text=text,
             voice="Eric",
-            model="eleven_multilingual_v2"
+            model="eleven_flash_v2_5"
         )
 
         # Save audio temporarily

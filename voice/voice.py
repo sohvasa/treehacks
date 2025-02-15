@@ -156,6 +156,8 @@ def generate_lipsync_video(text):
 def play_mp4_with_default_player(mp4_path):
     """
     Opens the MP4 file in the operating system's default video player.
+    On macOS, this function uses AppleScript to command QuickTime Player to open,
+    play the video automatically, and close the window once playback finishes.
     """
     if not mp4_path or not os.path.exists(mp4_path):
         print("No valid MP4 file to play.")
@@ -165,15 +167,28 @@ def play_mp4_with_default_player(mp4_path):
 
     if os.name == "nt":  # Windows
         os.startfile(mp4_path)
-    elif os.name == "posix":  # macOS or Linux
+    elif os.name == "posix":
         # macOS
         if "Darwin" in os.uname().sysname:
-            subprocess.run(["open", mp4_path])
+            # Use AppleScript to open QuickTime Player, play the video, and close it when done
+            apple_script = f'''
+            tell application "QuickTime Player"
+                set movieDoc to open POSIX file "{mp4_path}"
+                delay 1
+                play movieDoc
+                repeat while playing of movieDoc is true
+                    delay 1
+                end repeat
+                close movieDoc
+            end tell
+            '''
+            subprocess.run(["osascript", "-e", apple_script])
         else:
             # Linux or other *nix
             subprocess.run(["xdg-open", mp4_path])
     else:
         print("Unsupported OS: cannot auto-play the video.")
+
 
 # -------------------------------------------------------------------
 # 7. MAIN LOGIC: CAPTURE SPEECH -> GEMINI -> LIPSYNC MP4 -> PLAY
@@ -196,7 +211,7 @@ def main():
         # Generate MP4 with embedded audio
         mp4_file = generate_lipsync_video(ai_response)
         if mp4_file:
-            # Play it in the system's default player
+            # Play it in the system's default player (or QuickTime on macOS with autoplay)
             play_mp4_with_default_player(mp4_file)
 
             # OPTIONAL: Wait a few seconds if you want to auto-delete after playback

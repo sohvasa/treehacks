@@ -158,13 +158,36 @@ const Controls = ({ onJoystickMove, onMicToggle }) => {
     }
   };
   
+  // Add function to send commands to Raspberry Pi
+  const sendMoveCommand = async (direction, speed) => {
+    console.log('sending move command')
+    console.log(direction, speed)
+    try {
+      const response = await fetch('http://10.19.179.61:5000/move', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ direction, speed })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send movement command');
+      }
+    } catch (error) {
+      console.error('Movement command error:', error);
+      setStatus('Error controlling robot');
+    }
+  };
+
   useEffect(() => {
     const preventScroll = (e) => {
       e.preventDefault();
     };
 
+    console.log('joystickRef.current', joystickRef.current)
+
     if (joystickRef.current) {
-      // Prevent scrolling on the joystick container
       joystickRef.current.addEventListener('touchmove', preventScroll, { passive: false });
       
       const options = {
@@ -175,44 +198,59 @@ const Controls = ({ onJoystickMove, onMicToggle }) => {
         size: 90,
         lockX: false,
         lockY: false,
-        dynamicPage: true,
-        threshold: 0.1, // Minimum distance before triggering movement
-        maxNumberOfNipples: 1,
-        dataOnly: false,
-        restOpacity: 0.7,
-        catchDistance: 100,
-        restJoystick: true
       };
 
       joystickInstanceRef.current = nipplejs.create(options);
 
-      let lastMove = Date.now();
-      const throttleInterval = 50; // Throttle to 50ms
+      let moveInterval = null;
+      let currentVector = { x: 0, y: 0 };
 
       joystickInstanceRef.current.on('move', (evt, data) => {
-        const now = Date.now();
-        if (now - lastMove >= throttleInterval) {
-          if (onJoystickMove) {
-            // Normalize and smooth the data
-            const normalizedData = {
-              angle: data.angle,
-              distance: Math.min(data.distance, options.size / 2) / (options.size / 2),
-              direction: data.direction,
-              vector: {
-                x: parseFloat(data.vector.x.toFixed(3)),
-                y: parseFloat(data.vector.y.toFixed(3))
-              }
-            };
-            onJoystickMove(normalizedData);
-          }
-          lastMove = now;
+        // Update current vector
+        currentVector = {
+          x: data.vector.x,
+          y: data.vector.y
+        };
+
+        console.log('currentVector', currentVector)
+
+        // Start interval if not already started
+        if (!moveInterval) {
+          moveInterval = setInterval(() => {
+            // Calculate direction and speed based on vector
+            const x = currentVector.x;
+            const y = -currentVector.y; // Invert Y since joystick Y is inverted
+            
+            // Calculate speed (0-100) based on distance from center
+            const speed = Math.min(Math.sqrt(x * x + y * y) * 100, 100);
+            
+            // Determine direction based on vector components and speed
+            let direction;
+            if (speed <= 10) {
+              direction = 'center';
+            } else if (Math.abs(x) > Math.abs(y)) {
+              // Horizontal movement is stronger
+              direction = x > 0 ? 'right' : 'left';
+            } else {
+              // Vertical movement is stronger
+              direction = y > 0 ? 'forward' : 'backward';
+            }
+
+            // Send movement command
+            sendMoveCommand(direction, Math.round(speed));
+            console.log('sending move command:', direction, Math.round(speed));
+          }, 100); // Send commands every 100ms
         }
       });
 
       joystickInstanceRef.current.on('end', () => {
-        if (onJoystickMove) {
-          onJoystickMove({ vector: { x: 0, y: 0 }, distance: 0 });
+        // Clear interval and stop movement
+        if (moveInterval) {
+          clearInterval(moveInterval);
+          moveInterval = null;
         }
+        currentVector = { x: 0, y: 0 };
+        sendMoveCommand('stop', 0);
       });
     }
 
@@ -224,7 +262,7 @@ const Controls = ({ onJoystickMove, onMicToggle }) => {
         joystickInstanceRef.current.destroy();
       }
     };
-  }, [onJoystickMove]);
+  }, []);
 
   const handleMicToggle = () => {
     console.log('hi')

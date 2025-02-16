@@ -1,5 +1,8 @@
 import RPi.GPIO as GPIO
 import time
+from flask import Flask, jsonify, request
+import subprocess
+import os
 
 # Define the Motor class
 class Motor:
@@ -68,45 +71,75 @@ def stop_all_motors():
     rear_right_motor.stop()
     print("All motors stopped.")
 
-def main():
+# Initialize Flask app
+app = Flask(__name__)
+
+# Get the directory where the script is located
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+COMMAND_SCRIPT = os.path.join(SCRIPT_DIR, 'send_command.sh')
+
+# Make sure the script is executable
+subprocess.run(['chmod', '+x', COMMAND_SCRIPT])
+
+def send_move_command(direction, speed):
     try:
-        print("Tank drive initialized. Enter commands:")
-        print("MOVE <speed> <direction> - e.g., MOVE 50 forward")
-        print("STOP - to stop all motors")
+        result = subprocess.run(
+            [COMMAND_SCRIPT, direction, str(speed)],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print(f"Error sending command: {result.stderr}")
+            return False
+        return True
+    except Exception as e:
+        print(f"Exception sending command: {e}")
+        return False
 
-        while True:
-            command = input("> ").strip()
+@app.route('/move', methods=['POST'])
+def handle_move():
+    try:
+        data = request.get_json()
+        if not data or 'speed' not in data or 'direction' not in data:
+            return jsonify({'error': 'Missing speed or direction'}), 400
+        
+        direction = data['direction'].lower()
+        speed = int(data['speed'])
 
-            if command.startswith("MOVE"):
-                parts = command.split()
-                if len(parts) == 3:
-                    try:
-                        speed = int(parts[1])
-                        direction = parts[2].lower()
+        if not (0 <= speed <= 100):
+            return jsonify({'error': 'Speed must be between 0 and 100'}), 400
 
-                        if direction == "forward":
-                            move_forward(speed)
-                        elif direction == "backward":
-                            move_backward(speed)
-                        elif direction == "left":
-                            turn_right(speed)
-                        elif direction == "right":
-                            turn_left(speed)
-                        else:
-                            print("Invalid direction. Use 'forward', 'backward', 'left', or 'right'.")
-                    except ValueError:
-                        print("Invalid speed. Enter a number between 0 and 100.")
-                else:
-                    print("Invalid command format. Use 'MOVE <speed> <direction>'.")
-            elif command == "STOP":
-                stop_all_motors()
-            else:
-                print("Invalid command. Use 'MOVE <speed> <direction>' or 'STOP'.")
+        success = send_move_command(direction, speed)
+        if not success:
+            return jsonify({'error': 'Failed to send movement command'}), 500
 
-    except KeyboardInterrupt:
-        print("\nStopping all motors and cleaning up.")
+        return jsonify({
+            'status': 'success',
+            'message': f'Moving {direction} at speed {speed}'
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/stop', methods=['POST'])
+def handle_stop():
+    try:
         stop_all_motors()
-        GPIO.cleanup()
+        return jsonify({'status': 'success', 'message': 'All motors stopped'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def cleanup():
+    stop_all_motors()
+    GPIO.cleanup()
 
 if __name__ == "__main__":
-    main()
+    try:
+        # Register cleanup handler
+        import atexit
+        atexit.register(cleanup)
+        
+        # Run the Flask app
+        app.run(host='0.0.0.0', port=5000)
+    except KeyboardInterrupt:
+        cleanup()
